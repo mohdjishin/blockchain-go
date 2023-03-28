@@ -1,228 +1,189 @@
 package main
 
 import (
+	"crypto/md5"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
-	"strings"
+	"net/http"
 	"time"
+
+	"github.com/gorilla/mux"
 )
 
-const MINING_DEFFICULTY = 3
-
-// main block struct this is the base model of a block	 (single block)
 type Block struct {
-	nounce       int
-	previousHash [32]byte
-	timestamp    int64
-	transactions []*Transaction
+	Pos       int
+	Data      BookCheckout
+	Timestamp string
+	Hash      string
+	PrevHash  string
 }
 
-// creating a new block with passsing nounce and previous hash
-func NewBlock(nounce int, previousHash [32]byte, trasaction []*Transaction) *Block {
-	b := new(Block)
-	b.nounce = nounce
-	b.timestamp = int64(time.Now().UnixNano())
-	b.previousHash = previousHash
-	b.transactions = trasaction
-
-	return b
+type BookCheckout struct {
+	BookID       string `json:"book_id"`
+	User         string `json:"user"`
+	CheckoutDate string `json:"checkout_date"`
+	IsGenesis    bool   `json:"is_genesis"`
 }
 
-// struct for blockchain
+type Book struct {
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Author      string `json:"author"`
+	PublishDate string `json:"publish_date"`
+	ISBN        string `json:"isbn:`
+}
+
+func (b *Block) generateHash() {
+	// get string val of the Data
+	bytes, _ := json.Marshal(b.Data)
+	// concatenate the dataset
+	data := string(b.Pos) + b.Timestamp + string(bytes) + b.PrevHash
+	hash := sha256.New()
+	hash.Write([]byte(data))
+	b.Hash = hex.EncodeToString(hash.Sum(nil))
+}
+
+func CreateBlock(prevBlock *Block, checkoutItem BookCheckout) *Block {
+	block := &Block{}
+	block.Pos = prevBlock.Pos + 1
+	block.Timestamp = time.Now().String()
+	block.Data = checkoutItem
+	block.PrevHash = prevBlock.Hash
+	block.generateHash()
+
+	return block
+}
+
 type Blockchain struct {
-	transactionPool []*Transaction
-	chain           []*Block
+	blocks []*Block
 }
 
-// creating a new blockchian and returning a block
+var BlockChain *Blockchain
+
+func (bc *Blockchain) AddBlock(data BookCheckout) {
+
+	prevBlock := bc.blocks[len(bc.blocks)-1]
+
+	block := CreateBlock(prevBlock, data)
+
+	if validBlock(block, prevBlock) {
+		bc.blocks = append(bc.blocks, block)
+	}
+}
+
+func GenesisBlock() *Block {
+	return CreateBlock(&Block{}, BookCheckout{IsGenesis: true})
+}
+
 func NewBlockchain() *Blockchain {
-	b := &Block{}
-	bc := new(Blockchain)
-
-	bc.CreateBlock(0, b.Hash())
-	return bc
-
+	return &Blockchain{[]*Block{GenesisBlock()}}
 }
 
-// just a methord to marshal struct to json - this is a ad-on not imp. values inside block struct is private so getting  values using receiver method and updating
-func (b *Block) jsonMarshal() ([]byte, error) {
+func validBlock(block, prevBlock *Block) bool {
 
-	return json.Marshal(
-
-		struct {
-			Timestamp    int64          `json:"timestamp"`
-			Nonce        int            `json:"nounce"`
-			PreviousHash [32]byte       `json:"previous_hash"`
-			Transactions []*Transaction `json:"transactions"`
-		}{
-			Timestamp:    b.timestamp,
-			Nonce:        b.nounce,
-			PreviousHash: b.previousHash,
-			Transactions: b.transactions,
-		})
-}
-
-// returning last block.
-func (bc *Blockchain) LastBlock() *Block {
-	return bc.chain[len(bc.chain)-1]
-}
-
-// just a simple function go thrw Whole block chain ((chain)slice)
-func (bc *Blockchain) Print() {
-	for i, block := range bc.chain {
-		fmt.Printf("%s Chain : %d %s\n", strings.Repeat("=", 25), i, strings.Repeat("=", 25))
-
-		// block is type of Block type struct so we can use function with that struct - print is a function defined bellow with Block struct
-
-		block.Print()
-
-	}
-	fmt.Printf("%s", strings.Repeat("*", 50))
-}
-
-// to adding  a transaction and appending to blockchain trasnation pool . transation pool is slice of tranasaction
-func (bc *Blockchain) AddTransation(sender, recipient string, value float32) {
-
-	t := NewTransaction(sender, recipient, value)
-	bc.transactionPool = append(bc.transactionPool, t)
-}
-
-func (bc *Blockchain) CopyTransationPool() []*Transaction {
-	transaction := make([]*Transaction, 0)
-	for _, v := range bc.transactionPool {
-		transaction = append(transaction, NewTransaction(v.senderBlockChainAddress, v.recipientBlockChainAddress, v.value))
-
+	if prevBlock.Hash != block.PrevHash {
+		return false
 	}
 
-	return transaction
-
-}
-
-// 000
-
-// getting hash starting as 000 return true matches
-func (bc *Blockchain) ValidProof(nonce int, previousHash [32]byte, transaction []*Transaction, difficulty int) bool {
-	zeros := strings.Repeat("0", difficulty)
-	guessBlock := Block{nounce: nonce,
-		previousHash: previousHash,
-		timestamp:    0,
-		transactions: transaction}
-
-	guessHashStr := fmt.Sprintf("%x", guessBlock.Hash())
-	fmt.Println(guessHashStr)
-
-	return guessHashStr[:difficulty] == zeros
-}
-
-func (bc *Blockchain) ProofOfWork() int {
-	transaction := bc.CopyTransationPool()
-	previousHash := bc.LastBlock().Hash()
-	nonce := 0
-	for !bc.ValidProof(nonce, previousHash, transaction, MINING_DEFFICULTY) {
-		nonce = nonce + 1
+	if !block.validateHash(block.Hash) {
+		return false
 	}
-	return nonce
-}
 
-//  transation struct
-
-type Transaction struct {
-	senderBlockChainAddress    string
-	recipientBlockChainAddress string
-	value                      float32
-}
-
-// creating a transaction and return a transation object
-func NewTransaction(sender, recipeient string, value float32) *Transaction {
-	t := new(Transaction)
-	t.senderBlockChainAddress = sender
-	t.recipientBlockChainAddress = recipeient
-	t.value = value
-	return t
-
-}
-
-// simple methord to print tranastions
-func (t *Transaction) Print() {
-	fmt.Printf("%s \n", strings.Repeat("-", 50))
-	fmt.Printf("sender_blockchain_address : %s\n", t.senderBlockChainAddress)
-	fmt.Printf("recipient_blockchain_address : %s\n", t.recipientBlockChainAddress)
-	fmt.Printf("value                        : %1f\n", t.value)
-}
-
-// struct to json to access private data from transation methord
-func (t *Transaction) MarshalJson() ([]byte, error) {
-	return json.Marshal(struct {
-		SenderBlockChainAddress    string  `json:"sender_blockchain_addr"`
-		RecipientBlockChainAddress string  `json:"recipient_blockchain_addr"`
-		Value                      float32 `json:"value"`
-	}{
-		SenderBlockChainAddress:    t.senderBlockChainAddress,
-		RecipientBlockChainAddress: t.recipientBlockChainAddress,
-		Value:                      t.value,
-	})
-
-}
-
-// function To create Hash
-func (b *Block) Hash() [32]byte {
-	m, _ := b.jsonMarshal()
-	// fmt.Printf("%x \n", sha256.Sum256([]byte(m)))
-	return sha256.Sum256([]byte(m))
-}
-
-// creating block using NewBlock function and appending to BlockChain (chain) slice
-func (bc *Blockchain) CreateBlock(nounce int, previousHash [32]byte) *Block {
-	b := NewBlock(nounce, previousHash, bc.transactionPool)
-	bc.chain = append(bc.chain, b)
-	bc.transactionPool = []*Transaction{}
-
-	return b
-}
-
-// just a function to print blocks
-func (b *Block) Print() {
-	fmt.Printf("Timestamp		  : %d\n", b.timestamp)
-	fmt.Printf("previous_hash    : %x\n", b.previousHash)
-	fmt.Printf("Nounce			  : %d\n", b.nounce)
-
-	for _, t := range b.transactions {
-		t.Print()
+	if prevBlock.Pos+1 != block.Pos {
+		return false
 	}
-	// fmt.Printf("Transactions		  : %s\n", b.transactions)
+	return true
 }
 
-// init function
-func init() {
-	log.SetPrefix("Blockchain :")
+func (b *Block) validateHash(hash string) bool {
+	b.generateHash()
+	if b.Hash != hash {
+		return false
+	}
+	return true
+}
 
+func getBlockchain(w http.ResponseWriter, r *http.Request) {
+	jbytes, err := json.MarshalIndent(BlockChain.blocks, "", " ")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		json.NewEncoder(w).Encode(err)
+		return
+	}
+
+	io.WriteString(w, string(jbytes))
+}
+
+func writeBlock(w http.ResponseWriter, r *http.Request) {
+	var checkoutItem BookCheckout
+	if err := json.NewDecoder(r.Body).Decode(&checkoutItem); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Printf("could not write Block: %v", err)
+		w.Write([]byte("could not write block"))
+		return
+	}
+
+	BlockChain.AddBlock(checkoutItem)
+	resp, err := json.MarshalIndent(checkoutItem, "", " ")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Printf("could not marshal payload: %v", err)
+		w.Write([]byte("could not write block"))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write(resp)
+}
+
+func newBook(w http.ResponseWriter, r *http.Request) {
+	var book Book
+	if err := json.NewDecoder(r.Body).Decode(&book); err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Printf("could not create: %v", err)
+		w.Write([]byte("could not create new Book"))
+		return
+	}
+
+	h := md5.New()
+	io.WriteString(h, book.ISBN+book.PublishDate)
+	book.ID = fmt.Sprintf("%x", h.Sum(nil))
+
+	resp, err := json.MarshalIndent(book, "", " ")
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		log.Printf("could not marshal payload: %v", err)
+		w.Write([]byte("could not save book data"))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	w.Write(resp)
 }
 
 func main() {
 
-	blockChain := NewBlockchain()
-	blockChain.Print()
+	BlockChain = NewBlockchain()
 
-	fmt.Println()
-	fmt.Println()
-	fmt.Println()
-	blockChain.AddTransation("A", "B", 10)
-	prevHash := blockChain.LastBlock().Hash()
+	r := mux.NewRouter()
+	r.HandleFunc("/", getBlockchain).Methods("GET")
+	r.HandleFunc("/", writeBlock).Methods("POST")
+	r.HandleFunc("/new", newBook).Methods("POST")
 
-	nonce := blockChain.ProofOfWork()
-	blockChain.CreateBlock(nonce, prevHash)
+	go func() {
 
-	fmt.Println()
+		for _, block := range BlockChain.blocks {
+			fmt.Printf("Prev. hash: %x\n", block.PrevHash)
+			bytes, _ := json.MarshalIndent(block.Data, "", " ")
+			fmt.Printf("Data: %v\n", string(bytes))
+			fmt.Printf("Hash: %x\n", block.Hash)
+			fmt.Println()
+		}
 
-	fmt.Println()
+	}()
+	log.Println("Listening on port 3000")
 
-	blockChain.AddTransation("C", "D", 878778)
-	blockChain.AddTransation("X", "Y", 43)
-	prevHash = blockChain.LastBlock().Hash()
-	nonce = blockChain.ProofOfWork()
-	blockChain.CreateBlock(nonce, prevHash)
-
-	blockChain.Print()
+	log.Fatal(http.ListenAndServe(":3000", r))
 }
