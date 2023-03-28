@@ -1,3 +1,5 @@
-module github.com/mohdjishin
+module github.com/mohdjishin/block
 
 go 1.20
+
+require github.com/gorilla/mux v1.8.0
